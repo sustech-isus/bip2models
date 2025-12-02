@@ -1,0 +1,87 @@
+package LowSpeedMerge
+    port type StartSignal()
+    port type EndSignal()
+
+    atom type MoveDriver()
+        port StartSignal p()
+        port EndSignal r()
+        place START,RUNNING,END
+        initial to START
+        on p from START to RUNNING
+        on r from RUNNING to END
+    end
+
+    atom type MergeChecker()
+        port StartSignal p()
+        port EndSignal r()
+        place START,RUNNING,END
+        initial to START
+        on p from START to RUNNING
+        on r from RUNNING to END
+    end
+
+    atom type Waiting()
+        port StartSignal p()
+        port EndSignal r()
+        place START,RUNNING,END
+        initial to START
+        on p from START to RUNNING
+        on r from RUNNING to END
+    end
+
+    atom type Merge()
+        port StartSignal p()
+        port EndSignal r()
+        place START,RUNNING,END
+        initial to START
+        on p from START to RUNNING
+        on r from RUNNING to END
+    end
+
+    atom type SpeedChecker()
+        port StartSignal p()
+        port EndSignal r()
+        place START,RUNNING,END
+        initial to START
+        on p from START to RUNNING
+        on r from RUNNING to END
+    end
+
+    atom type AdjustSpeed()
+        port StartSignal p()
+        port EndSignal r()
+        place START,RUNNING,END
+        initial to START
+        on p from START to RUNNING
+        on r from RUNNING to END
+    end
+
+    atom type MatchSpeed()
+        port StartSignal p()
+        port EndSignal r()
+        place START,RUNNING,END
+        initial to START
+        on p from START to RUNNING
+        on r from RUNNING to END
+    end
+
+    atom type SafetyChecker()
+        port StartSignal p()
+        port EndSignal r()
+        place START,RUNNING,END
+        initial to START
+        on p from START to RUNNING
+        on r from RUNNING to END
+    end
+
+    compound type LowSpeedMerge_Full()
+        component MoveDriver c1()
+        component MergeChecker c2()
+        component Waiting c3()
+        component Merge c4()
+        component SpeedChecker c5()
+        component AdjustSpeed c6()
+        component MatchSpeed c7()
+        component SafetyChecker c8()
+    end
+end

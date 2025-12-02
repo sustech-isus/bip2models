@@ -1,0 +1,282 @@
+@cpp(src="ext-cpp/bip_utils.cpp", include="bip_utils.hpp")
+package LaneChange
+  extern function bip_printf(string, int)   
+  extern function bip_printf2(string, int, int)
+
+  port type LaneSignal_t(int speed, int cmd)
+
+  // ============== MoveDriver =============
+  atom type MoveDriver(int id)
+    data int speed
+    data int cmd
+    data bool in_lane_change
+    
+    export port LaneSignal_t driver(speed, cmd)
+
+    place IDLE, L_PREPARE, L_ALIGN, L_EXECUTE, L_MONITOR, L_COMPLETE
+    initial to IDLE do { speed = 60; cmd = 0; in_lane_change = false; }
+
+    // IDLE到准备阶段
+    on driver from IDLE to L_PREPARE provided (cmd == 1)
+      do { 
+        bip_printf2("Driver%d: Preparing lane change at %d\n", id, speed);
+        in_lane_change = true;
+      }
+    
+    // 准备到对齐
+    internal from L_PREPARE to L_ALIGN
+      do { 
+        bip_printf2("Driver%d: Aligning for lane change at %d\n", id, speed);
+      }
+    
+    // 对齐到执行
+    internal from L_ALIGN to L_EXECUTE
+      do { 
+        bip_printf2("Driver%d: Executing lane change at %d\n", id, speed);
+      }
+    
+    // 执行到监控
+    internal from L_EXECUTE to L_MONITOR
+      do { 
+        bip_printf2("Driver%d: Monitoring lane change at %d\n", id, speed);
+      }
+    
+    // 监控到完成
+    internal from L_MONITOR to L_COMPLETE
+      do { 
+        bip_printf2("Driver%d: Lane change in progress at %d\n", id, speed);
+      }
+    
+    // 完成返回到IDLE
+    on driver from L_COMPLETE to IDLE
+      do { 
+        bip_printf("Driver%d: Complete\n", id);
+        cmd = 0;
+        in_lane_change = false;
+      }
+  end
+
+  // ============== SpeedChecker =============
+  // 添加速度分析、匹配验证等中间状态
+  atom type SpeedChecker(int id)
+    data int target
+    data int resp
+    data bool matched
+    
+    export port LaneSignal_t speed(target, resp)
+
+    place IDLE, ANALYZE_SPEED, COMPARE_TARGET, MATCH_VERIFY, CALCULATE_DIFF, CHECK
+    initial to IDLE do { target = 65; resp = 0; matched = false; }
+
+    // IDLE到速度分析
+    on speed from IDLE to ANALYZE_SPEED provided (resp == 0)
+      do { 
+        bip_printf2("SpeedChecker%d: Analyzing speed for target %d\n", id, target);
+      }
+    
+    // 速度分析到比较目标
+    internal from ANALYZE_SPEED to COMPARE_TARGET
+      do { 
+        bip_printf2("SpeedChecker%d: Comparing with target\n", id, 0);
+      }
+    
+    // 比较目标到计算差值
+    internal from COMPARE_TARGET to CALCULATE_DIFF
+      do { 
+        bip_printf2("SpeedChecker%d: Calculating speed difference\n", id, 0);
+      }
+    
+    // 计算差值到匹配验证
+    internal from CALCULATE_DIFF to MATCH_VERIFY
+      do { 
+        bip_printf2("SpeedChecker%d: Verifying speed match\n", id, 0);
+      }
+    
+    // 匹配验证到CHECK（确认匹配）
+    internal from MATCH_VERIFY to CHECK
+      do { 
+        matched = true;
+        bip_printf2("SpeedChecker%d: Matched to %d\n", id, target);
+      }
+    
+    internal from CHECK to IDLE
+      do { 
+        resp = 1;
+        matched = false;
+      }
+  end
+
+  // ============== SafetyChecker =============
+  atom type SafetyChecker(int id)
+    data int check_speed
+    data int safety_resp
+    data bool is_safe
+    
+    export port LaneSignal_t safety(check_speed, safety_resp)
+
+    place IDLE, SCAN_BLINDSPOT, CHECK_LANELINE, ASSESS_GAP, VERIFY_SAFE, CHECK
+    initial to IDLE do { check_speed = 70; safety_resp = 0; is_safe = false; }
+
+    // IDLE到盲区检测
+    on safety from IDLE to SCAN_BLINDSPOT provided (safety_resp == 0)
+      do { 
+        bip_printf2("SafetyChecker%d: Scanning blind spot at %d\n", id, check_speed);
+      }
+    
+    // 盲区检测到车道线确认
+    internal from SCAN_BLINDSPOT to CHECK_LANELINE
+      do { 
+        bip_printf2("SafetyChecker%d: Checking lane line\n", id, 0);
+      }
+    
+    // 车道线确认到评估间隙
+    internal from CHECK_LANELINE to ASSESS_GAP
+      do { 
+        bip_printf2("SafetyChecker%d: Assessing gap\n", id, 0);
+      }
+    
+    // 评估间隙到验证安全
+    internal from ASSESS_GAP to VERIFY_SAFE
+      do { 
+        bip_printf2("SafetyChecker%d: Verifying safety\n", id, 0);
+      }
+    
+    // 验证安全到CHECK
+    internal from VERIFY_SAFE to CHECK
+      do { 
+        is_safe = true;
+        bip_printf2("SafetyChecker%d: Safe for %d\n", id, check_speed);
+      }
+    
+    internal from CHECK to IDLE
+      do { 
+        safety_resp = 2;
+        is_safe = false;
+      }
+  end
+
+  // ============== Controller =============
+  atom type Controller(int id)
+    data int speed
+    data int step
+    data int internal_state
+    
+    export port LaneSignal_t ctrl(speed, step)
+
+    place IDLE, S1_REQUEST, S1_WAIT_SPEED, S1_VERIFY, S2_PREPARE, S2_WAIT_GAP, S2_EXECUTE, S2_COMPLETE, S3_REQUEST, S3_WAIT_SPEED, S3_VERIFY
+    initial to IDLE do { speed = 65; step = 1; internal_state = 0; }
+
+    // IDLE到S1请求速度匹配
+    on ctrl from IDLE to S1_REQUEST provided (internal_state == 0)
+      do { 
+        internal_state = 1;
+        bip_printf("Controller: S1_REQUEST - Request speed match %d\n", speed);
+      }
+    
+    // S1请求到等待速度反馈
+    internal from S1_REQUEST to S1_WAIT_SPEED
+      do { 
+        bip_printf("Controller: S1_WAIT_SPEED - Waiting speed feedback\n", 0);
+      }
+    
+    // 等待到验证速度
+    on ctrl from S1_WAIT_SPEED to S1_VERIFY provided (internal_state == 1)
+      do { 
+        bip_printf("Controller: S1_VERIFY - Verify speed %d\n", speed);
+      }
+    
+    // S1验证到S2准备阶段
+    on ctrl from S1_VERIFY to S2_PREPARE provided (internal_state == 1 && step == 1)
+      do { 
+        internal_state = 2;
+        speed = 70;
+        step = 2;
+        bip_printf("Controller: S2_PREPARE - Prepare lane change at %d\n", speed);
+      }
+    
+    // 准备到等待安全间隙（速度分析）
+    internal from S2_PREPARE to S2_WAIT_GAP
+      do { 
+        bip_printf("Controller: S2_WAIT_GAP - Waiting for safe gap\n", 0);
+      }
+    
+    // 等待到执行变道
+    on ctrl from S2_WAIT_GAP to S2_EXECUTE provided (internal_state == 2)
+      do { 
+        bip_printf("Controller: S2_EXECUTE - Executing lane change at %d\n", speed);
+      }
+    
+    // 执行到完成
+    internal from S2_EXECUTE to S2_COMPLETE
+      do { 
+        bip_printf("Controller: S2_COMPLETE - Lane change completed\n", 0);
+      }
+    
+    // 完成到S3请求速度调整
+    on ctrl from S2_COMPLETE to S3_REQUEST provided (internal_state == 2 && step == 2)
+      do { 
+        internal_state = 3;
+        speed = 75;
+        step = 3;
+        bip_printf("Controller: S3_REQUEST - Request speed adjust to %d\n", speed);
+      }
+    
+    // S3请求到等待速度反馈
+    internal from S3_REQUEST to S3_WAIT_SPEED
+      do { 
+        bip_printf("Controller: S3_WAIT_SPEED - Waiting speed feedback\n", 0);
+      }
+    
+    // 等待到验证速度
+    on ctrl from S3_WAIT_SPEED to S3_VERIFY provided (internal_state == 3)
+      do { 
+        bip_printf("Controller: S3_VERIFY - Verify speed %d\n", speed);
+      }
+    
+    // S3验证返回到IDLE
+    internal from S3_VERIFY to IDLE
+      do { 
+        internal_state = 0;
+        speed = 60;
+        step = 1;
+        bip_printf("Controller: IDLE\n", 0);
+      }
+  end
+
+  // ============== 连接器 =============
+  connector type ConnSpeed(LaneSignal_t ctrl, LaneSignal_t speed)
+    define ctrl' speed
+    on ctrl speed down { 
+      speed.speed = ctrl.speed; 
+      speed.cmd = ctrl.cmd; 
+    }
+  end
+
+  connector type ConnSafety(LaneSignal_t speed, LaneSignal_t safety)
+    define speed' safety
+    on speed safety down { 
+      safety.speed = speed.speed; 
+      safety.cmd = speed.cmd; 
+    }
+  end
+
+  connector type ConnDriver(LaneSignal_t safety, LaneSignal_t driver)
+    define safety' driver
+    on safety driver provided (safety.cmd == 2) down { 
+      driver.speed = safety.speed; 
+      driver.cmd = 1; 
+    }
+  end
+
+  // ============== 顶层 =============
+  compound type LaneChangeCompound()
+    component Controller controller(1)
+    component SpeedChecker speed_check(2)
+    component SafetyChecker safety_check(3)
+    component MoveDriver driver(4)
+
+    connector ConnSpeed conn1(controller.ctrl, speed_check.speed)
+    connector ConnSafety conn2(speed_check.speed, safety_check.safety)
+    connector ConnDriver conn3(safety_check.safety, driver.driver)
+  end
+end

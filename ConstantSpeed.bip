@@ -1,0 +1,296 @@
+@cpp(src="ext-cpp/bip_utils.cpp", include="bip_utils.hpp")
+package ConstantSpeed
+  extern function bip_printf(string, int)
+  extern function bip_printf2(string, int, int)
+  
+  // 速度参数
+  const data int INITIAL_VELOCITY = 58  // 初始速度，默认70
+  const data int TARGET_VELOCITY = 65   // 目标速度，默认65
+
+  port type SpeedUpPort()
+  port type SlowDownPort()
+  port type DonePort()
+  port type VelocityCheckPort(int current_vel, int expected_vel)
+  port type VelocitySlowPort()
+  port type VelocityQuickPort()
+  port type ConstantPort()
+
+  atom type MoveDriver(int id)
+    data int VComplete
+    
+    export port SpeedUpPort speed_up()
+    export port SlowDownPort slow_down()
+    export port DonePort up_done()
+    export port DonePort slow_done()
+
+    place IDLE, UP, DOWN, UP_COMPLETE, DOWN_COMPLETE
+    initial to IDLE do { VComplete = 0; }
+
+    on speed_up from IDLE to UP do { 
+      VComplete = 0; 
+      bip_printf2("Driver%d: Speed up %d\n", id, VComplete); 
+    }
+    
+    // 加速过程中，继续接收speed_up信号（自循环）
+    on speed_up from UP to UP provided (VComplete == 0) do { 
+      VComplete = 0;  // 继续加速
+      bip_printf2("Driver%d: Still speeding up %d\n", id, VComplete); 
+    }
+    
+    // 加速完成：内部转换设置VComplete=1，进入完成状态
+    internal from UP to UP_COMPLETE provided (VComplete == 0) do { 
+      VComplete = 1;  // 完成加速
+      bip_printf2("Driver%d: Acceleration complete %d\n", id, VComplete); 
+    }
+    
+    // 触发up_done端口（通过连接器同步到Controller）
+    on up_done from UP_COMPLETE to IDLE do { 
+      bip_printf("Driver%d: Up done\n", id); 
+      VComplete = 0;  // 重置
+    }
+    
+    on slow_down from IDLE to DOWN do { 
+      VComplete = 0; 
+      bip_printf2("Driver%d: Slow down %d\n", id, VComplete); 
+    }
+    
+    // 减速过程中，继续接收slow_down信号（自循环）
+    on slow_down from DOWN to DOWN provided (VComplete == 0) do { 
+      VComplete = 0;  // 继续减速
+      bip_printf2("Driver%d: Still slowing down %d\n", id, VComplete); 
+    }
+    
+    // 减速完成：内部转换设置VComplete=1，进入完成状态
+    internal from DOWN to DOWN_COMPLETE provided (VComplete == 0) do { 
+      VComplete = 1;  // 完成减速
+      bip_printf2("Driver%d: Deceleration complete %d\n", id, VComplete); 
+    }
+    
+    // 触发slow_done端口（通过连接器同步到Controller）
+    on slow_done from DOWN_COMPLETE to IDLE do { 
+      bip_printf("Driver%d: Slow done\n", id); 
+      VComplete = 0;  // 重置
+    }
+  end
+
+  atom type Controller(int id, int initial_velocity, int target_velocity)
+    data int velocity
+    data int constant_vel
+    
+    export port VelocityCheckPort velocity_check(velocity, constant_vel)
+    export port SpeedUpPort speed_up()
+    export port SlowDownPort slow_down()
+    export port DonePort up_done()
+    export port DonePort slow_done()
+    export port VelocitySlowPort velocity_slow()
+    export port VelocityQuickPort velocity_quick()
+    export port ConstantPort constant()
+
+    place IDLE, S1, U1, U2, U2_COMPLETE, D1, D2, D2_COMPLETE
+    // 使用传入的参数初始化速度和目标速度
+    initial to IDLE do { velocity = initial_velocity; constant_vel = target_velocity; }
+
+    // IDLE到匀速状态S1：通过velocity_check端口触发（主动触发检查）
+    on velocity_check from IDLE to S1 do { 
+      bip_printf2("Ctrl%d: Check vel %d\n", id, velocity); 
+    }
+    
+    // 速度匹配，保持匀速：收到constant后返回IDLE，准备下一轮检查
+    on constant from S1 to IDLE do { 
+      bip_printf("Ctrl%d: Constant speed maintained\n", id); 
+    }
+    
+    // 速度慢，需要加速
+    on velocity_slow from S1 to U1 do { 
+      bip_printf("Ctrl%d: Need speed up\n", id); 
+    }
+    
+    // 速度快，需要减速
+    on velocity_quick from S1 to D1 do { 
+      bip_printf("Ctrl%d: Need slow down\n", id); 
+    }
+    
+    // 发送加速命令
+    on speed_up from U1 to U2 do { 
+      bip_printf("Ctrl%d: Speed up command\n", id); 
+    }
+    
+    // 收到up_done，进入完成检查状态
+    on up_done from U2 to U2_COMPLETE do { 
+      // 更新velocity（根据协议，MoveDriver完成加速后速度应该增加）
+      // 注意：加速时可能超过目标速度，这样可以探索减速路径
+      velocity = velocity + 1;  // 模拟速度增加
+      bip_printf2("Ctrl%d: Accel done, velocity=%d\n", id, velocity); 
+    }
+    
+    // 在U2_COMPLETE状态，根据速度决定下一步（使用internal转换避免非确定性）
+    internal from U2_COMPLETE to IDLE provided (velocity >= constant_vel) do { 
+      // 速度达到或超过期望值
+      // 如果速度正好等于目标，设置为目标速度
+      // 如果速度超过目标，保持超过的值，这样下次检查时会触发减速路径
+      if (velocity > constant_vel) then
+        // 保持超过的值，不设置为constant_vel，以便探索减速路径
+        bip_printf2("Ctrl%d: Exceeded target, velocity=%d, will decel\n", id, velocity);
+      else
+        // 正好等于目标，设置为目标速度
+        velocity = constant_vel;
+        bip_printf2("Ctrl%d: Reached target, velocity=%d\n", id, velocity);
+      fi
+    }
+    
+    // 加速未完成：速度仍小于期望值，继续加速
+    internal from U2_COMPLETE to U1 provided (velocity < constant_vel) do { 
+      bip_printf2("Ctrl%d: Still slow, velocity=%d, continue\n", id, velocity); 
+    }
+    
+    // 发送减速命令
+    on slow_down from D1 to D2 do { 
+      bip_printf("Ctrl%d: Slow down command\n", id); 
+    }
+    
+    // 收到slow_done，进入完成检查状态
+    on slow_done from D2 to D2_COMPLETE do { 
+      // 更新velocity（根据协议，MoveDriver完成减速后速度应该减少）
+      velocity = velocity - 5;  // 模拟速度减少
+      bip_printf2("Ctrl%d: Decel done, velocity=%d\n", id, velocity); 
+    }
+    
+    // 在D2_COMPLETE状态，根据速度决定下一步（使用internal转换避免非确定性）
+    internal from D2_COMPLETE to IDLE provided (velocity <= constant_vel) do { 
+      // 速度达到或低于期望值
+      // 如果速度正好等于目标，设置为目标速度
+      // 如果速度低于目标，保持低于的值，这样下次检查时会触发加速路径
+      if (velocity < constant_vel) then
+        // 保持低于的值，不设置为constant_vel，以便探索加速路径
+        bip_printf2("Ctrl%d: Below target, velocity=%d, will accel\n", id, velocity);
+      else
+        // 正好等于目标，设置为目标速度
+        velocity = constant_vel;
+        bip_printf2("Ctrl%d: Reached target, velocity=%d\n", id, velocity);
+      fi
+    }
+    
+    // 减速未完成：速度仍大于期望值，继续减速
+    internal from D2_COMPLETE to D1 provided (velocity > constant_vel) do { 
+      bip_printf2("Ctrl%d: Still quick, velocity=%d, continue\n", id, velocity); 
+    }
+  end
+
+  atom type VelocityChecker(int id, int initial_velocity, int target_velocity)
+    data int current_vel
+    data int expected_vel
+    data bool matched
+    
+    export port VelocityCheckPort velocity_check(current_vel, expected_vel)
+    export port VelocitySlowPort velocity_slow()
+    export port VelocityQuickPort velocity_quick()
+    export port ConstantPort constant()
+
+    place IDLE, CHECK, MATCHED, SLOW, QUICK
+    // 使用传入的参数初始化速度和期望速度
+    initial to IDLE do { 
+      current_vel = initial_velocity; expected_vel = target_velocity; matched = false; 
+    }
+
+    // 接收速度检查请求，更新速度数据
+    on velocity_check from IDLE to CHECK do { 
+      // 从Controller接收最新的速度数据（通过连接器传递）
+      // current_vel和expected_vel会在连接器的down动作中更新
+      bip_printf2("Checker: current=%d, expected=%d\n", current_vel, expected_vel); 
+    }
+    
+    // 速度匹配，内部转换到MATCHED状态
+    // 注意：三个internal转换的条件互斥（==, <, >），不会产生真正的非确定性
+    internal from CHECK to MATCHED provided (current_vel == expected_vel) do { 
+      matched = true;
+      bip_printf("Checker%d: Matched\n", id); 
+    }
+    
+    // 速度慢，内部转换到SLOW状态
+    internal from CHECK to SLOW provided (current_vel < expected_vel) do { 
+      matched = false;
+      // 不更新current_vel，速度由Controller和MoveDriver控制
+      bip_printf2("Checker: Too slow, current=%d, expected=%d\n", current_vel, expected_vel); 
+    }
+    
+    // 速度快，内部转换到QUICK状态
+    internal from CHECK to QUICK provided (current_vel > expected_vel) do { 
+      matched = false;
+      // 不更新current_vel，速度由Controller和MoveDriver控制
+      bip_printf2("Checker: Too quick, current=%d, expected=%d\n", current_vel, expected_vel); 
+    }
+    
+    // 在MATCHED状态触发constant端口（通过连接器同步到Controller）
+    on constant from MATCHED to IDLE do { 
+      bip_printf("Checker%d: Sending constant signal\n", id); 
+    }
+    
+    // 在SLOW状态触发velocity_slow端口（通过连接器同步到Controller）
+    on velocity_slow from SLOW to IDLE do { 
+      bip_printf("Checker%d: Sending velocity slow signal\n", id); 
+    }
+    
+    // 在QUICK状态触发velocity_quick端口（通过连接器同步到Controller）
+    on velocity_quick from QUICK to IDLE do { 
+      bip_printf("Checker%d: Sending velocity quick signal\n", id); 
+    }
+  end
+
+  // Controller-MoveDriver
+  connector type ConnSpeedUp(SpeedUpPort ctrl, SpeedUpPort driver)
+    define ctrl' driver
+  end
+
+  connector type ConnSlowDown(SlowDownPort ctrl, SlowDownPort driver)
+    define ctrl' driver
+  end
+
+  connector type ConnUpDone(DonePort driver, DonePort ctrl)
+    define driver' ctrl
+  end
+
+  connector type ConnSlowDone(DonePort driver, DonePort ctrl)
+    define driver' ctrl
+  end
+
+  // Controller-VelocityChecker
+  connector type ConnCheck(VelocityCheckPort ctrl, VelocityCheckPort checker)
+    define ctrl' checker
+    on ctrl checker down { 
+      checker.current_vel = ctrl.current_vel;
+      checker.expected_vel = ctrl.expected_vel;
+    }
+  end
+
+  // VelocityChecker-Controller
+  connector type ConnSlow(VelocitySlowPort checker, VelocitySlowPort ctrl)
+    define checker' ctrl
+  end
+
+  connector type ConnQuick(VelocityQuickPort checker, VelocityQuickPort ctrl)
+    define checker' ctrl
+  end
+
+  connector type ConnConstant(ConstantPort checker, ConstantPort ctrl)
+    define checker' ctrl
+  end
+
+  compound type ConstantSpeedCompound()
+    component MoveDriver driver(1)
+    component Controller controller(2, INITIAL_VELOCITY, TARGET_VELOCITY)
+    component VelocityChecker checker(3, INITIAL_VELOCITY, TARGET_VELOCITY)
+    
+    // Controller-MoveDriver
+    connector ConnSpeedUp conn1(controller.speed_up, driver.speed_up)
+    connector ConnSlowDown conn2(controller.slow_down, driver.slow_down)
+    connector ConnUpDone conn3(driver.up_done, controller.up_done)
+    connector ConnSlowDone conn4(driver.slow_done, controller.slow_done)
+    
+    // Controller-VelocityChecker
+    connector ConnCheck conn5(controller.velocity_check, checker.velocity_check)
+    connector ConnSlow conn6(checker.velocity_slow, controller.velocity_slow)
+    connector ConnQuick conn7(checker.velocity_quick, controller.velocity_quick)
+    connector ConnConstant conn8(checker.constant, controller.constant)
+  end
+end
+

@@ -1,0 +1,195 @@
+package Automatic_Parking
+
+// ============= 端口类型定义 =============
+port type StartSignal()
+port type EndSignal()
+port type DataSignal()
+
+// ============= Controller 原子类型 =============
+// 根据流程图设计，包含6个主要状态：IDLE、S0、S1、S2、S3、S4
+atom type Controller()
+    port StartSignal start()
+    port StartSignal stop()
+    port EndSignal query_parklot()      // 向ParklotDetector查询车位
+    port EndSignal select_parklot()     // 向ParklotChecker选择车位
+    port EndSignal plan_traj()          // 向TrajPlanning规划轨迹
+    port StartSignal exec_traj()        // 向Actuators执行轨迹
+    port StartSignal check_traj()       // 向TrajChecker检查轨迹
+    port DataSignal recv_parklot_data() // 接收ParklotDetector的车位数据
+    port DataSignal recv_check_result() // 接收TrajChecker的检查结果
+    
+    // 库所定义及含义
+    // IDLE: 空闲状态 - 等待启动信号
+    // S0: 空位检测 - 查询可用停车位
+    // S1: 车位选取 - 选择合适的停车位
+    // S2: 轨迹规划 - 规划泊车轨迹
+    // S3: 车位可行性检测 - 检测目标车位空间是否足够
+    // S4: 轨迹可行性检测 - 检测规划轨迹是否会碰撞
+    place IDLE, S0, S1, S2, S3, S4
+    initial to IDLE
+    
+    // IDLE -> S0: 接收启动信号，开始检测停车位
+    on start from IDLE to S0
+    
+    // S0 -> S1: 完成停车位检测，进入车位选取
+    on query_parklot from S0 to S1
+    
+    // S1 -> S2: 完成车位选取，进入轨迹规划
+    on select_parklot from S1 to S2
+    
+    // S2 -> S3: 完成轨迹规划，检测车位可行性
+    on plan_traj from S2 to S3
+    
+    // S3 -> S4 或 S3 -> S2: 根据车位可行性检查结果
+    // 正常流程：S3 -> S4（车位可行，进入轨迹可行性检测）
+    on check_traj from S3 to S4
+    
+    // S4 -> IDLE 或 S4 -> S0: 根据轨迹可行性检查结果
+    // 正常流程：S4 -> IDLE（轨迹可行，执行泊车）
+    on recv_check_result from S4 to IDLE
+    
+    // 重新检测流程：如果车位或轨迹不可行，返回到S0重新检测
+    on recv_parklot_data from S1 to S0  // 车位不合适，重新检测
+    
+    // 停止流程
+    on stop from IDLE to IDLE           // IDLE状态停止（保持IDLE）
+    on stop from S0 to IDLE
+    on stop from S1 to IDLE
+    on stop from S2 to IDLE
+    on stop from S3 to IDLE
+    on stop from S4 to IDLE
+end
+
+// ============= ParklotDetector 原子类型 =============
+// 停车位检测组件：使用传感器检测周围可用停车位
+atom type ParklotDetector()
+    port DataSignal start_detect()      // 接收检测启动信号
+    port EndSignal parklot_found()      // 发送发现停车位信号
+    port EndSignal parklot_data()       // 发送停车位数据
+    port DataSignal no_parklot()        // 没有可用停车位
+    
+    // 库所定义
+    // Idle: 空闲状态
+    // Detecting: 检测中
+    // Found: 找到停车位
+    // NotFound: 未找到停车位
+    place Idle, Detecting, Found, NotFound
+    initial to Idle
+    
+    on start_detect from Idle to Detecting
+    on parklot_found from Detecting to Found
+    on no_parklot from Detecting to NotFound
+    on parklot_data from Found to Idle
+    on start_detect from NotFound to Detecting
+end
+
+// ============= ParklotChecker 原子类型 =============
+// 停车位可行性检查组件：验证目标车位空间是否足够停车
+atom type ParklotChecker()
+    port DataSignal check_space()       // 接收车位空间检查请求
+    port EndSignal space_sufficient()   // 车位空间足够
+    port EndSignal space_insufficient() // 车位空间不足
+    port DataSignal result()            // 发送检查结果
+    
+    // 库所定义
+    // Idle: 空闲状态
+    // Checking: 检查中
+    // OK: 空间足够
+    // NotOK: 空间不足
+    place Idle, Checking, OK, NotOK
+    initial to Idle
+    
+    on check_space from Idle to Checking
+    on space_sufficient from Checking to OK
+    on space_insufficient from Checking to NotOK
+    on result from OK to Idle
+    on result from NotOK to Idle
+end
+
+// ============= TrajPlanning 原子类型 =============
+// 轨迹规划组件：根据车位信息规划泊车轨迹
+atom type TrajPlanning()
+    port DataSignal plan_request()      // 接收规划请求
+    port EndSignal traj_planned()       // 规划完成
+    port DataSignal traj_data()         // 发送轨迹数据
+    
+    // 库所定义
+    // Idle: 空闲状态
+    // Planning: 规划中
+    // Planned: 规划完成
+    place Idle, Planning, Planned
+    initial to Idle
+    
+    on plan_request from Idle to Planning
+    on traj_planned from Planning to Planned
+    on traj_data from Planned to Idle
+end
+
+// ============= TrajChecker 原子类型 =============
+// 轨迹可行性检查组件：检测规划的轨迹是否会发生碰撞
+atom type TrajChecker()
+    port DataSignal check_collision()   // 接收碰撞检查请求
+    port EndSignal no_collision()       // 无碰撞风险
+    port EndSignal collision_risk()     // 存在碰撞风险
+    port DataSignal check_result()      // 发送检查结果
+    
+    // 库所定义
+    // Idle: 空闲状态
+    // Checking: 检查中
+    // Safe: 轨迹安全
+    // Unsafe: 轨迹不安全
+    place Idle, Checking, Safe, Unsafe
+    initial to Idle
+    
+    on check_collision from Idle to Checking
+    on no_collision from Checking to Safe
+    on collision_risk from Checking to Unsafe
+    on check_result from Safe to Idle
+    on check_result from Unsafe to Idle
+end
+
+// ============= Sensors 原子类型 =============
+// 传感器组件：采集LIDAR和摄像头数据
+atom type Sensors()
+    port EndSignal lidar_data()         // LIDAR数据
+    port EndSignal camera_data()        // 摄像头数据
+    
+    // 库所定义
+    // Ready: 就绪状态
+    place Ready
+    initial to Ready
+    
+    on lidar_data from Ready to Ready
+    on camera_data from Ready to Ready
+end
+
+// ============= Actuators 原子类型 =============
+// 执行器组件：控制车辆进行泊车操作
+atom type Actuators()
+    port StartSignal execute_parking()  // 接收泊车执行命令
+    port EndSignal status()             // 发送状态反馈
+    
+    // 库所定义
+    // Idle: 空闲状态
+    // Executing: 执行中
+    place Idle, Executing
+    initial to Idle
+    
+    on execute_parking from Idle to Executing
+    on status from Executing to Idle
+end
+
+// ============= 复合系统类型 =============
+// Automatic_Parking_System 复合组件：
+// 整合所有子组件和它们之间的交互
+compound type Automatic_Parking_System()
+    component Controller c_controller()
+    component ParklotDetector c_detector()
+    component ParklotChecker c_checker()
+    component TrajPlanning c_traj_plan()
+    component TrajChecker c_traj_check()
+    component Sensors c_sensors()
+    component Actuators c_actuators()
+end
+
+end  // <-- 结束 package Automatic_Parking

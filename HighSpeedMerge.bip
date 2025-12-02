@@ -1,0 +1,351 @@
+@cpp(src="ext-cpp/bip_utils.cpp", include="bip_utils.hpp")
+package LowSpeedMerge
+  extern function bip_printf(string, int)
+  extern function bip_printf2(string, int, int)
+  
+  port type MergeSignal_t(int speed, int cmd)
+
+  // ============== MoveDriver =============
+  atom type MoveDriver(int id)
+    data int speed_0
+    data int cmd_0
+    data bool in_merge
+    
+    export port MergeSignal_t driver(speed_0, cmd_0)
+
+    place START, ASSESS_TRAFFIC, INITIATE_MERGE, END
+    initial to START do { speed_0 = 70; cmd_0 = 0; in_merge = false; }
+
+    // 开始检测交通评估
+    on driver from START to ASSESS_TRAFFIC provided (cmd_0 == 1)
+      do { 
+        bip_printf2("Driver%d: Detecting merge requirement at %d km/h\n", id, speed_0);
+      }
+    
+    // 交通评估到初始化合流
+    internal from ASSESS_TRAFFIC to INITIATE_MERGE
+      do { 
+        in_merge = true;
+        bip_printf("Driver%d: Initiating merge procedure\n", id);
+      }
+    
+    // 初始化到结束
+    internal from INITIATE_MERGE to END
+      do { 
+        bip_printf("Driver%d: Merge procedure running\n", id);
+      }
+    
+    // 重置
+    on driver from END to START
+      do { 
+        bip_printf("Driver%d: Merge procedure completed\n", id);
+        cmd_0 = 0;
+        in_merge = false;
+      }
+  end
+
+  // ============== MergeChecker =============
+  atom type MergeChecker(int id)
+      data int speed_1
+      data int cmd_1
+      data bool is_merge
+
+      export port MergeSignal_t merge(speed_1, cmd_1)
+
+      place IDLE, CALCULATE_GAP, CALCULATE_DIFF, ANALYZE_MERGE, MATCH_VERIFY, CHECK
+      initial to IDLE do { speed_1 = 70; cmd_1 = 0; is_merge = false; }
+
+      // IDLE到计算间隙
+      on merge from IDLE to CALCULATE_GAP provided (cmd_1 == 0)
+      do { 
+          bip_printf("MergeChecker%d\n", id);
+      }
+
+      // 计算间隙到计算差值
+      internal from CALCULATE_GAP to CALCULATE_DIFF
+      do { 
+          bip_printf2("MergeChecker%d: Analyzing\n", id, 0);
+      }
+      
+      // 计算差值到分析合流
+      internal from CALCULATE_DIFF to ANALYZE_MERGE
+      do { 
+          bip_printf2("MergeChecker%d: Calculating speed difference\n", id, 0);
+      }
+      
+      // 分析合流到匹配验证
+      internal from ANALYZE_MERGE to MATCH_VERIFY
+      do { 
+          bip_printf2("MergeChecker%d: Verifying speed merge\n", id, 0);
+      }
+      
+      // 匹配验证到CHECK（确认匹配）
+      internal from MATCH_VERIFY to CHECK
+      do { 
+          is_merge = true;
+          bip_printf2("MergeChecker%d: is_merge to %d\n", id, speed_1);
+      }
+      
+      internal from CHECK to IDLE
+      do { 
+          cmd_1 = 1;
+          is_merge = false;
+      }
+  end
+
+  // ============== SpeedChecker =============
+  // 添加速度分析、匹配验证等中间状态
+  atom type SpeedChecker(int id)
+    data int speed_2
+    data int cmd_2
+    data bool matched
+    
+    export port MergeSignal_t speed(speed_2, cmd_2)
+
+    place IDLE, ANALYZE_SPEED, COMPARE_TARGET, MATCH_VERIFY, CALCULATE_DIFF, CHECK
+    initial to IDLE do { speed_2 = 70; cmd_2 = 0; matched = false; }
+
+    // IDLE到速度分析
+    on speed from IDLE to ANALYZE_SPEED provided (cmd_2 == 0)
+      do { 
+        bip_printf2("SpeedChecker%d: Analyzing speed for target %d\n", id, speed_2);
+      }
+    
+    // 速度分析到比较目标
+    internal from ANALYZE_SPEED to COMPARE_TARGET
+      do { 
+        bip_printf2("SpeedChecker%d: Comparing with target\n", id, 0);
+      }
+    
+    // 比较目标到计算差值
+    internal from COMPARE_TARGET to CALCULATE_DIFF
+      do { 
+        bip_printf2("SpeedChecker%d: Calculating speed difference\n", id, 0);
+      }
+    
+    // 计算差值到匹配验证
+    internal from CALCULATE_DIFF to MATCH_VERIFY
+      do { 
+        bip_printf2("SpeedChecker%d: Verifying speed match\n", id, 0);
+      }
+    
+    // 匹配验证到CHECK（确认匹配）
+    internal from MATCH_VERIFY to CHECK
+      do { 
+        matched = true;
+        bip_printf2("SpeedChecker%d: Matched to %d\n", id, speed_2);
+      }
+    
+    internal from CHECK to IDLE
+      do { 
+        cmd_2 = 2;
+        matched = false;
+      }
+  end
+
+  // ============== SafetyChecker =============
+  atom type SafetyChecker(int id)
+    data int speed_3
+    data int cmd_3
+    data bool is_safe
+    
+    export port MergeSignal_t safety(speed_3, cmd_3)
+
+    place IDLE, SCAN_BLINDSPOT, CHECK_LANELINE, ASSESS_GAP, VERIFY_SAFE, CHECK
+    initial to IDLE do { speed_3 = 70; cmd_3 = 0; is_safe = false; }
+
+    // IDLE到盲区检测
+    on safety from IDLE to SCAN_BLINDSPOT provided (cmd_3 == 0)
+      do { 
+        bip_printf2("SafetyChecker%d: Scanning blind spot at %d\n", id, speed_3);
+      }
+    
+    // 盲区检测到车道线确认
+    internal from SCAN_BLINDSPOT to CHECK_LANELINE
+      do { 
+        bip_printf2("SafetyChecker%d: Checking lane line\n", id, 0);
+      }
+    
+    // 车道线确认到评估间隙
+    internal from CHECK_LANELINE to ASSESS_GAP
+      do { 
+        bip_printf2("SafetyChecker%d: Assessing gap\n", id, 0);
+      }
+    
+    // 评估间隙到验证安全
+    internal from ASSESS_GAP to VERIFY_SAFE
+      do { 
+        bip_printf2("SafetyChecker%d: Verifying safety\n", id, 0);
+      }
+    
+    // 验证安全到CHECK
+    internal from VERIFY_SAFE to CHECK
+      do { 
+        is_safe = true;
+        bip_printf2("SafetyChecker%d: Safe for %d\n", id, speed_3);
+      }
+    
+    internal from CHECK to IDLE
+      do { 
+        cmd_3 = 3;
+        is_safe = false;
+      }
+  end
+
+  // ============== Controller =============
+  atom type Controller(int id)
+    data int speed
+    data int step
+    data int internal_state
+    
+    export port MergeSignal_t ctrl(speed, step)
+
+    place IDLE, S0_REQUEST, S0_WAIT_MERGE, S0_VERIFY, S1_REQUEST, S1_WAIT_SPEED, S1_VERIFY, S2_PREPARE, S2_WAIT_GAP, S2_EXECUTE, S2_COMPLETE, S3_REQUEST, S3_WAIT_SPEED, S3_VERIFY
+    initial to IDLE do { speed = 70; step = 1; internal_state = 0; }
+
+    // IDLE到S0请求合流
+    on ctrl from IDLE to S0_REQUEST provided (internal_state == 0)
+      do { 
+        internal_state = 1;
+        bip_printf("Controller: S0_REQUEST - Request is_merge %d\n", speed);
+      }
+    
+    // S0合流请求到S0合流等待
+    internal from S0_REQUEST to S0_WAIT_MERGE
+      do { 
+        bip_printf("Controller: S0_WAIT_MERGE - Waiting\n", 0);
+      }
+    
+    // S0合流等待到S0验证合流
+    on ctrl from S0_WAIT_MERGE to S0_VERIFY provided (internal_state == 1)
+      do { 
+        bip_printf("Controller: S0_VERIFY - Verify %d\n", speed);
+      }
+
+    // S0验证合流到S1速度请求
+    on ctrl from S0_VERIFY to S1_REQUEST provided (internal_state == 1 && step == 1)
+      do { 
+        internal_state = 2;
+        speed = 70;
+        step = 2;
+        bip_printf("Controller: S1_REQUEST %d\n", speed);
+      }
+
+    // S1请求到等待速度反馈
+    internal from S1_REQUEST to S1_WAIT_SPEED
+      do { 
+        bip_printf("Controller: S1_WAIT_SPEED - Waiting speed feedback\n", 0);
+      }
+    
+    // 等待到验证速度
+    on ctrl from S1_WAIT_SPEED to S1_VERIFY provided (internal_state == 2)
+      do { 
+        bip_printf("Controller: S1_VERIFY - Verify speed %d\n", speed);
+      }
+    
+    // S1验证到S2准备阶段
+    on ctrl from S1_VERIFY to S2_PREPARE provided (internal_state == 2 && step == 2)
+      do { 
+        internal_state = 3;
+        speed = 60;
+        step = 3;
+        bip_printf("Controller: S2_PREPARE - Prepare merge at %d\n", speed);
+      }
+    
+    // 准备到等待安全间隙（速度分析）
+    internal from S2_PREPARE to S2_WAIT_GAP
+      do { 
+        bip_printf("Controller: S2_WAIT_GAP - Waiting for safe gap\n", 0);
+      }
+    
+    // 等待到执行合流
+    on ctrl from S2_WAIT_GAP to S2_EXECUTE provided (internal_state == 3)
+      do { 
+        bip_printf("Controller: S2_EXECUTE - Executing merge at %d\n", speed);
+      }
+    
+    // 执行到完成
+    internal from S2_EXECUTE to S2_COMPLETE
+      do { 
+        bip_printf("Controller: S2_COMPLETE - merge completed\n", 0);
+      }
+    
+    // 合流完成到S3请求速度调整
+    on ctrl from S2_COMPLETE to S3_REQUEST provided (internal_state == 3 && step == 3)
+      do { 
+        internal_state = 4;
+        speed = 70;
+        step = 4;
+        bip_printf("Controller: S3_REQUEST - Request speed adjust to %d\n", speed);
+      }
+    
+    // S3请求到等待速度反馈
+    internal from S3_REQUEST to S3_WAIT_SPEED
+      do { 
+        bip_printf("Controller: S3_WAIT_SPEED - Waiting speed feedback\n", 0);
+      }
+    
+    // 等待到验证速度
+    on ctrl from S3_WAIT_SPEED to S3_VERIFY provided (internal_state == 3)
+      do { 
+        bip_printf("Controller: S3_VERIFY - Verify speed %d\n", speed);
+      }
+
+    // S3执行完成返回到IDLE
+    internal from S3_VERIFY to IDLE
+      do { 
+        internal_state = 0;
+        speed = 70;
+        step = 1;
+        bip_printf("Controller: IDLE\n", 0);
+      }
+  end
+
+  // ============== Connector =============
+
+  connector type ConnMerge(MergeSignal_t ctrl, MergeSignal_t merge)
+    define ctrl' merge
+    on ctrl merge down { 
+      merge.speed = ctrl.speed; 
+      merge.cmd = ctrl.cmd; 
+    }
+  end
+
+  connector type ConnSpeed(MergeSignal_t merge, MergeSignal_t speed)
+    define merge' speed
+    on merge speed down { 
+      speed.speed = merge.speed; 
+      speed.cmd = merge.cmd; 
+    }
+  end
+
+  connector type ConnSafety(MergeSignal_t speed, MergeSignal_t safety)
+    define speed' safety
+    on speed safety down { 
+      safety.speed = speed.speed; 
+      safety.cmd = speed.cmd; 
+    }
+  end
+
+  connector type ConnDriver(MergeSignal_t safety, MergeSignal_t driver)
+    define safety' driver
+    on safety driver provided (safety.cmd == 2) down { 
+      driver.speed = safety.speed; 
+      driver.cmd = 1; 
+    }
+  end
+
+  // ============== LowSpeedMerge_Full =============
+  compound type LowSpeedMerge_Full()
+    component Controller controller(1)
+    component MergeChecker merge_check(2)
+    component SpeedChecker speed_check(3)
+    component SafetyChecker safety_check(4)
+    component MoveDriver driver(5)
+
+    connector ConnSpeed conn1(controller.ctrl, merge_check.merge)
+    connector ConnSpeed conn2(merge_check.merge, speed_check.speed)
+    connector ConnSafety conn3(speed_check.speed, safety_check.safety)
+    connector ConnDriver conn4(safety_check.safety, driver.driver)
+  end
+end
